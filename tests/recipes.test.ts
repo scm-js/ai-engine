@@ -386,6 +386,31 @@ describe("recipes", () => {
     expect(stateOf(1)).toContain("Name: T");
   });
 
+  it("agent hands back the map state it added, so a history that keeps it replays each message as the model saw it", async () => {
+    const answer = { type: "tool_use", id: "t1", name: "place_units", input: {} } as const;
+    const claude = new FakeClaudeClient().answer(
+      { text: "", stopReason: "tool_use", content: [{ type: "thinking", thinking: "", signature: "s1" } as never, answer as never] },
+      { text: "Done." },
+    );
+    const run = (messages: AgentMessage[], selection: string) => runRecipe(claude, ctx6, { recipe: RECIPES.agent, input: { messages, tools: [], facts: { ...facts, selection: [selection] } }, model: "claude-opus-5-5", effort: "medium", maxTokens: 100, thinking: false });
+    const history: AgentMessage[] = [{ role: "user", content: [{ type: "text", text: "add marines" }] }];
+    const first = await run(history, "nothing");
+    expect(first.output.state).toMatch(/^<map_state>\n[\s\S]*Selected right now:\n {2}nothing\n<\/map_state>$/);
+
+    // What the plugin does with the answer: the state goes at the end of the message it was added to.
+    history[0] = { ...history[0]!, content: [...history[0]!.content, { type: "text", text: first.output.state! }] };
+    history.push({ role: "assistant", content: first.output.content }, { role: "user", content: [{ type: "tool_result", toolUseId: "t1", content: "placed" }] });
+    const second = await run(history, "3 units");
+
+    const sent = (call: number, i: number) => JSON.parse(JSON.stringify(claude.calls[call]!.messages[i]!.content, (k, v) => (k === "cache_control" ? undefined : v)));
+    // The breakpoint moves on, which the thinking check does not mind; the words do not.
+    expect(sent(1, 0)).toEqual(sent(0, 0));
+    expect(second.output.state).toContain("3 units");
+    const last = claude.calls[1]!.messages[2]!.content as { type: string; text?: string }[];
+    expect(last.map((c) => c.type)).toEqual(["tool_result", "text"]);
+    expect(last[1]!.text).toBe(second.output.state);
+  });
+
   it("agent refuses a conversation that does not end with the user", () => {
     const r = RECIPES.agent.input.safeParse({ messages: [{ role: "user", content: [{ type: "text", text: "hi" }] }, { role: "assistant", content: [{ type: "text", text: "yo" }] }], tools: [], facts });
     expect(r.success).toBe(false);
