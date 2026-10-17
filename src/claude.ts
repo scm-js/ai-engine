@@ -180,6 +180,11 @@ export interface ClaudeResult {
   toolUses: string[];
   /** Why the cache missed, when `diagnose` asked; `null` when it did not miss or Anthropic did not say. */
   cacheMiss: CacheMiss | null;
+  /**
+   * The replayed thinking blocks Anthropic left out (`input_transformations`). Asked for whenever a model that checks
+   * replayed thinking gets a history carrying some; `null` when it was not asked, empty when nothing was dropped.
+   */
+  thinkingDrops: ThinkingDrop[] | null;
   /** The request and answer, when `capture` asked. Images are replaced by their byte counts. */
   payload?: { request: unknown; content: BetaContentBlock[] };
 }
@@ -188,6 +193,16 @@ export interface CacheMiss {
   type: string;
   /** Tokens that had to be re-read because of it, when the reason carries that. */
   tokens?: number;
+}
+
+/**
+ * A thinking block the API removed before the model saw it: where it was (`messages.{i}.content.{j}` of the request)
+ * and which check removed it — `prefix_binding_mismatch` when the conversation before it changed since it was made,
+ * `model_binding_mismatch` when another model made it.
+ */
+export interface ThinkingDrop {
+  path: string;
+  reason: string;
 }
 
 /** What the request weighs, from the call. Shared by the real client and the fake so the log means the same in tests. */
@@ -320,6 +335,7 @@ export class AnthropicClaudeClient implements ClaudeClient {
         shape: shapeOf(call),
         toolUses: [],
         cacheMiss: cacheMissOf(message),
+        thinkingDrops: thinkingDropsOf(message),
       };
     } catch (err) {
       throw mapError(err, !!call.apiKey);
@@ -371,6 +387,7 @@ export class AnthropicClaudeClient implements ClaudeClient {
         shape: shapeOf(call),
         toolUses: toolUsesOf(message.content),
         cacheMiss: cacheMissOf(message),
+        thinkingDrops: thinkingDropsOf(message),
         ...(call.capture ? { payload: { request: withoutImages(params), content: message.content } } : {}),
       };
     } catch (err) {
@@ -396,6 +413,12 @@ function cacheMissOf(message: { diagnostics?: { cache_miss_reason: { type: strin
   const reason = message.diagnostics?.cache_miss_reason;
   if (!reason) return null;
   return { type: reason.type, ...(typeof reason.cache_missed_input_tokens === "number" ? { tokens: reason.cache_missed_input_tokens } : {}) };
+}
+
+function thinkingDropsOf(message: { input_transformations?: { type: string; path: string; reason: string }[] | null }): ThinkingDrop[] | null {
+  const list = message.input_transformations;
+  if (!list) return null;
+  return list.filter((t) => t.type === "thinking_dropped").map((t) => ({ path: t.path, reason: t.reason }));
 }
 
 /** SDK exceptions → protocol error codes. A caller's bad key is their problem; the server's is ours. */
@@ -425,7 +448,7 @@ export function mapError(err: unknown, byok: boolean): ClaudeError {
 /* ── Test double ────────────────────────────────────────── */
 
 export type FakeAnswer =
-  | { text: string; stopReason?: BetaStopReason; model?: string; tokens?: Partial<TokenCounts>; thinking?: string; content?: BetaContentBlock[]; cacheMiss?: CacheMiss }
+  | { text: string; stopReason?: BetaStopReason; model?: string; tokens?: Partial<TokenCounts>; thinking?: string; content?: BetaContentBlock[]; cacheMiss?: CacheMiss; thinkingDrops?: ThinkingDrop[] }
   | { refusal: BetaRefusalStopDetails["category"] }
   | { error: Error; tokens?: Partial<TokenCounts> };
 
@@ -453,7 +476,7 @@ export class FakeClaudeClient implements ClaudeClient {
   async warm(call: ClaudeCall): Promise<ClaudeResult> {
     this.warmed.push(call);
     if (this.warmError) throw this.warmError;
-    return { text: "", content: [], stopReason: "max_tokens", refusal: null, tokens: { ...zeroTokens(), ...this.warmTokens }, model: call.model, durationMs: 1, messageId: `msg_warm_${this.warmed.length}`, shape: shapeOf(call), toolUses: [], cacheMiss: null };
+    return { text: "", content: [], stopReason: "max_tokens", refusal: null, tokens: { ...zeroTokens(), ...this.warmTokens }, model: call.model, durationMs: 1, messageId: `msg_warm_${this.warmed.length}`, shape: shapeOf(call), toolUses: [], cacheMiss: null, thinkingDrops: null };
   }
 
   async checkKey(apiKey: string): Promise<void> {
@@ -476,7 +499,7 @@ export class FakeClaudeClient implements ClaudeClient {
       if (a.tokens && a.error instanceof ClaudeError) a.error.tokens = { ...zeroTokens(), ...a.tokens };
       throw a.error;
     }
-    const common = { messageId: `msg_fake_${index}`, shape: shapeOf(call), cacheMiss: null, ...(call.capture ? { payload: { request: withoutImages({ system: systemBlocks(call), messages: call.messages, tools: call.tools }), content: [] as BetaContentBlock[] } } : {}) };
+    const common = { messageId: `msg_fake_${index}`, shape: shapeOf(call), cacheMiss: null, thinkingDrops: null, ...(call.capture ? { payload: { request: withoutImages({ system: systemBlocks(call), messages: call.messages, tools: call.tools }), content: [] as BetaContentBlock[] } } : {}) };
     if ("refusal" in a) {
       return { ...common, text: "", content: [], stopReason: "refusal", refusal: { type: "refusal", category: a.refusal, explanation: null } as BetaRefusalStopDetails, tokens: zeroTokens(), model: call.model, durationMs: 1, toolUses: [] };
     }
@@ -495,6 +518,7 @@ export class FakeClaudeClient implements ClaudeClient {
       durationMs: 1,
       toolUses: toolUsesOf(content),
       cacheMiss: a.cacheMiss ?? null,
+      thinkingDrops: a.thinkingDrops ?? null,
       ...(common.payload ? { payload: { ...common.payload, content } } : {}),
     };
   }
