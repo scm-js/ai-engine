@@ -762,4 +762,11 @@ export interface AgentInput {
 export interface AgentOutput {
   content: AgentContent[];
   stopReason: "end_turn" | "tool_use" | "max_tokens" | "refusal";
+  /**
+   * The map-state block the server added at the end of the last user message, exactly as
+   * the model saw it. Keep it in the history, as a text block at the end of that message,
+   * so the next request sends the message unchanged: a model that checks replayed thinking
+   * (the 5.5 generation) drops every thinking block after a message that changed.
+   */
+  state?: string;
 }
