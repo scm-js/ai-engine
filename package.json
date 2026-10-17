@@ -1,6 +1,6 @@
 {
   "name": "@scm-js/ai-engine",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "The AI behind scmjs.dev: the prompt recipes that plan StarCraft maps, write triggers and run the editor's assistant, over the Anthropic API.",
   "license": "MIT",
   "type": "module",

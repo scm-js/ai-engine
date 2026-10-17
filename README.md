@@ -58,7 +58,11 @@ each its own block, from the most shared to the most specific: what every map ha
 common is one entry for everyone, the tileset's one per tileset, and only the map's own
 block is rewritten when the map changes. A breakpoint sits on the last message the plugin
 sent, before the map-state block that changes every turn, so a long conversation with
-screenshots is read from the cache rather than re-billed each round. The `triggers`
+screenshots is read from the cache rather than re-billed each round. The answer carries
+that map-state block back (`state`), and the client keeps it at the end of the message it
+was added to: the 5.5 models check that a replayed thinking block's conversation is
+unchanged and drop it otherwise, so a history that forgot the block lost the model's
+reasoning on every round. The `triggers`
 recipe does the same for a map's declarations and hand-made triggers when the request
 comes from the Write Triggers dialog (`iterative`): they are the bulk of every call on
 that map, and a person at the dialog asks again minutes later.
