@@ -7,20 +7,20 @@ builder and a parser, and they all run on the Anthropic API.
 
 This is the part of the scmjs.dev server that decides what the model is asked and what is
 done with its answer. Sign-in, accounts, credit, rate limits and budgets stay in the
-server, which is not public. If you bring your own Anthropic key to scmjs.dev, this is
-the code your key runs.
+server, which is not public. The AI features on scmjs.dev run on your own Anthropic key,
+and this is the code that key runs.
 
 The recipes know nothing about game data. The editor gathers what a recipe needs from the
 open map (the tileset's terrain names, the map's statistics, a rendered picture, the
-trigger script's declarations), and applies what comes back with its own tools. So a map
-plan is a coarse grid of terrain names or a list of shapes, not tiles; a trigger request
-comes back as a script the editor compiles; a review comes back as findings with tile
-coordinates.
+trigger script's declarations), and applies what comes back with its own tools. A map
+plan comes back as a coarse grid of terrain names or a list of shapes, which the editor
+turns into tiles. A trigger request comes back as a script the editor compiles. A review
+comes back as findings with tile coordinates.
 
 ## What your key pays for
 
-Every item in the editor's Tools ▸ AI menu is one recipe here, and every call a recipe
-makes is billed to your key. One assistant message is usually several calls: the model
+Each item in the editor's Tools ▸ AI menu runs one or more recipes here, and every call
+a recipe makes is billed to your key. One assistant message is usually several calls: the model
 reads the map, changes something, looks at the result and goes on, up to the number of
 rounds set in the AI options (24 to start with). Most of each call is the same reference
 text (the editor's rules, the unit list, the tileset's terrain), so after the first call
@@ -28,25 +28,26 @@ that part is read from Anthropic's prompt cache for a tenth of the normal price 
 When an answer comes back malformed, the recipe sends it back once to be fixed, and that
 second call is billed too.
 
-The scmjs.dev server passes your request and your key to Anthropic and keeps nothing of
-it: not what you sent, not the answer, not your key or your address.
+The scmjs.dev server passes your request and your key to Anthropic. It does not store
+what you sent, the answer, your key or your address.
 
 ## Suggesting a change
 
-- **A bad answer.** Open an issue with the feature, what you asked, what came back, the
-  Quality setting and the cost the dialog showed. Attach the map if you can share it.
-- **A better prompt.** Send a pull request that edits the recipe's file. The tests run
-  without the network, so they check the parsing and the rules, not whether the answers
-  got better. Say in the pull request what you tried, on which maps, and what came back
-  before and after.
-- **Longer prompts cost everyone.** Text added to a system prompt is paid for on every
-  call by everyone who uses the feature, so say roughly how much your change adds.
+For a bad answer, open an issue with the feature, what you asked, what came back, the
+Quality setting and the cost the dialog showed. Attach the map if you can share it.
+
+For a better prompt, send a pull request that edits the recipe's file. Say what you tried,
+on which maps, and what came back before and after. The tests run without the network:
+they check the parsing and the rules, and cannot tell whether the answers got better.
+
+Text added to a system prompt is paid for on every call by everyone who uses the feature.
+Say roughly how much your change adds.
 
 ## Recipes
 
 | Recipe | In | Out |
 | --- | --- | --- |
-| `map-plan` | a prompt, the map size and tileset vocabulary, a player count and symmetry; `language: "shapes"` with the tileset's ramp pairs and bridge pair | a layout: legend + grid of cells — or, in the shape language, statements in tiles (ground, rects, diamonds, strokes, plateaus with ramps, lanes, bridges) the plugin compiles — plus bases, ramps, doodads, units, locations, a name and description |
+| `map-plan` | a prompt, the map size and tileset vocabulary, a player count and symmetry; `language: "shapes"` with the tileset's ramp pairs and bridge pair | a layout (a legend and a grid of cells, or in the shape language, statements in tiles that the plugin compiles), plus bases, ramps, doodads, units, locations, a name and description |
 | `region-plan` | the same for one area, with the area as it is now | a layout for that area |
 | `triggers` | a description and the map's generated `.d.ts` | a trigger script and a summary; repair rounds carry the compiler's diagnostics |
 | `explain-triggers` | triggers in the editor's text format, optionally a question | Markdown, streamed |
@@ -56,7 +57,7 @@ it: not what you sent, not the answer, not your key or your address.
 | `strings` | the string table and an instruction | the table rewritten |
 | `agent` | a conversation, the plugin's tool definitions, the map's facts and a per-map reference block | the assistant's turn: text and tool calls, streamed |
 | `ums-design` | a prompt ("a madness map", "an RPG about …"), the map's size and vocabulary, the plugin's toolkit of trigger-system kinds and its layout presets | a design document: genre, premise, players and forces, systems, a layout preset with its parameters or the layout brief for `map-plan`, objectives and briefing |
-| `cast` | a replay's players, map and moments (clip windows, what happened before and during each, how it came out) | timed lines for two commentators, a play-by-play caster and an analyst |
+| `cast` | for the Aftermath plugin: a replay's players, map and moments (clip windows, what happened before and during each, how it came out) | timed lines for two commentators, a play-by-play caster and an analyst |
 
 Each recipe is one file in `src/recipes/`. `src/recipes/plan.ts` and `src/recipes/shapes.ts`
 are the two layout languages the plan recipes share. The inputs and outputs of every
@@ -89,9 +90,8 @@ changes.
 A breakpoint sits on the last message the plugin sent, before the map-state block that
 changes every turn, so a long conversation with screenshots is read from the cache instead
 of billed again each round. The answer hands that map-state block back (`state`), and the
-client keeps it at the end of the message it was added to. The 5.5 models check that a
-replayed thinking block's conversation is unchanged and drop the block otherwise, so a
-history that left the map state out lost the model's reasoning on every round.
+client keeps it at the end of the message it was added to. The history must keep it: the
+model drops a replayed thinking block when the conversation before it has changed.
 
 The `triggers` recipe does the same for a map's declarations and hand-made triggers when
 the request comes from the Write Triggers dialog (`iterative`). They are most of every call
@@ -135,15 +135,15 @@ const { output, calls } = await runRecipe(claude, { maxAgentMessages: 60 }, {
 ```
 
 `runRecipe` takes hooks for streaming (`onText`, `onThinking`, `onToolUse`), for each call
-as it starts and ends (`beforeCall`, `onCall`, `onCallError` — where a server keeps its
-spending in check and its call log), and an `AbortSignal`. `calls` lists every call the
+as it starts and ends (`beforeCall`, `onCall`, `onCallError`, where a server checks its
+spending and writes its call log), and an `AbortSignal`. `calls` lists every call the
 recipe made, the repair round included, with its tokens; `costOf` and `DEFAULT_PRICES`
 turn those into dollars.
 
 Install it from a release:
 
 ```sh
-npm install https://github.com/scm-js/ai-engine/releases/download/v0.1.0/scm-js-ai-engine-0.1.0.tgz
+npm install https://github.com/scm-js/ai-engine/releases/download/v0.2.0/scm-js-ai-engine-0.2.0.tgz
 ```
 
 ## Working on it
